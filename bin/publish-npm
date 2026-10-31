@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Publishes the package at the version in package.json, unless npm already has it. With NPM_TOKEN set, the
+# token authenticates (the first publish, before a trusted publisher exists); without it, the job's OIDC token
+# does, through an npm new enough for trusted publishing.
+set -euo pipefail
+
+if [[ ${NPM_TOKEN:-} ]]; then
+  npm config set '//registry.npmjs.org/:_authToken' "$NPM_TOKEN"
+elif [[ ! ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-} ]]; then
+  echo "NPM_TOKEN must be set when not running in a GitHub Action with id-token permission" >&2
+  exit 1
+fi
+
+npm run build
+
+# An npm that speaks trusted publishing, without touching the runner's own.
+npm install --prefix ./oidc/ npm@11.6.2 >/dev/null
+NPM="$(pwd)/oidc/node_modules/.bin/npm"
+
+name="$(node -p "require('./package.json').name")"
+version="$(node -p "require('./package.json').version")"
+if "$NPM" view "$name@$version" version >/dev/null 2>&1; then
+  echo "$name@$version is already published"
+  exit 0
+fi
+"$NPM" publish --access public --provenance --tag latest

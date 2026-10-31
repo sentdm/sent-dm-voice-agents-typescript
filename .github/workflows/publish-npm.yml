@@ -1,0 +1,38 @@
+# Runs when release-please publishes a release, and by hand to publish again if a run failed.
+#
+# npm attaches a trusted publisher only to a package that already exists, so the package's first version is
+# published with a short-lived NPM_TOKEN repository secret (a granular access token for the @sentdm scope with
+# "Bypass 2FA" on, created by an npm org owner). Set the secret, dispatch this workflow, then on npmjs.com add a
+# trusted publisher to the package (owner sentdm, repository sent-dm-voice-agents-typescript, workflow
+# publish-npm.yml, environment blank), delete the secret and revoke the token. From then on the token is absent
+# and bin/publish-npm authenticates with this job's OIDC token. Both paths publish with npm provenance.
+name: Publish NPM
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Publish to npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: bash bin/publish-npm
