@@ -9,7 +9,8 @@ permissions:
 
 jobs:
   test:
-    name: test
+    # Named by the Node version alone: the ruleset requires `test (20)`, `test (22)` and `test (24)`.
+    name: test (${{ matrix.node }})
     runs-on: ubuntu-24.04
     strategy:
       matrix:
