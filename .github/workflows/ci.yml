@@ -13,7 +13,15 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        node: ['20', '22', '24']
+        # The tests run TypeScript straight through Node's type stripping, which Node 22.6 brought; on
+        # Node 20 the package type-checks, builds and loads, which is what its users on 20 do.
+        include:
+          - node: '20'
+            tests: false
+          - node: '22'
+            tests: true
+          - node: '24'
+            tests: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,8 +31,11 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: npm install
       - run: npm run typecheck
-      - run: npm test
+      - if: matrix.tests
+        run: npm test
       - run: npm run build
+      - name: The built package loads
+        run: node -e "import('./dist/index.js').then((m) => { if (typeof m.Agent !== 'function') throw new Error('no Agent export'); })"
       - run: npm run format
 
   conformance:
