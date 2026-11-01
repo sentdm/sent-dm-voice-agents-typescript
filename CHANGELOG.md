@@ -1,0 +1,13 @@
+# Changelog
+
+## 0.1.0 (2026-11-01)
+
+
+### Features
+
+* the Sent Voice Agents SDK for TypeScript, on protocol 0.2.0 ([0de1da3](https://github.com/sentdm/sent-dm-voice-agents-typescript/commit/0de1da3d80b6d21bed3bf1ce53323647fd1436c2))
+
+
+### Bug Fixes
+
+* **sdk:** the TypeScript format check leaves release-please's manifest alone ([7a2a21d](https://github.com/sentdm/sent-dm-voice-agents-typescript/commit/7a2a21df7c9a1a0fc1d2cc9203f9b9f569231e2d))
