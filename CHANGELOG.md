@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/sentdm/sent-dm-voice-agents-typescript/compare/v0.1.0...v0.1.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **sdk:** the TypeScript runtime holds frames during a resume, fails lost tool calls, contains a throwing handler ([6b56ebf](https://github.com/sentdm/sent-dm-voice-agents-typescript/commit/6b56ebf0e91492bcb867c8e0a18b83940e3e40bc))
+
 ## 0.1.0 (2026-11-01)
 
 
