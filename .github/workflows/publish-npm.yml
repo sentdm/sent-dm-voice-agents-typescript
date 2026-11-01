@@ -1,14 +1,22 @@
-# Runs when release-please publishes a release, and by hand to publish again if a run failed.
+# Runs when release-please publishes a release, and by hand to publish again if a run failed. By hand with
+# `dry_run`, it only exchanges the job's OIDC token with npm, which checks the trusted publisher without
+# publishing.
 #
 # npm attaches a trusted publisher only to a package that already exists, so the package's first version is
 # published with a short-lived NPM_TOKEN repository secret (a granular access token for the @sentdm scope with
 # "Bypass 2FA" on, created by an npm org owner). Set the secret, dispatch this workflow, then on npmjs.com add a
 # trusted publisher to the package (owner sentdm, repository sent-dm-voice-agents-typescript, workflow
 # publish-npm.yml, environment blank), delete the secret and revoke the token. From then on the token is absent
-# and bin/publish-npm authenticates with this job's OIDC token. Both paths publish with npm provenance.
+# and bin/publish-npm authenticates with this job's OIDC token. Both paths publish with npm provenance, which
+# npm grants to public source repositories only: the repository goes public before its first publish.
 name: Publish NPM
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Exchange the job's OIDC token with npm and stop, to check the trusted publisher without publishing
+        type: boolean
+        default: false
   release:
     types: [published]
 
@@ -30,8 +38,33 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: The version to publish
+        # 0.0.0 is the template's placeholder: the repository has no release yet, so there is nothing to publish.
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version"
+          if [ "$version" = "0.0.0" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            echo "no release yet: package.json still carries 0.0.0" >&2
+            exit 1
+          fi
       - run: npm install
+      - name: Check the trusted publisher
+        # The exchange npm itself makes on publish: the job's OIDC token for a short-lived registry token. A 2xx
+        # (npm answers 201) means a trusted publisher on npmjs.com names this repository and workflow. The token
+        # is never printed.
+        if: ${{ inputs.dry_run }}
+        run: |
+          id_token="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).value")"
+          name="$(node -p "require('./package.json').name.replace('/', '%2f')")"
+          code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $id_token" -H 'Content-Type: application/json' "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/$name")"
+          case "$code" in
+            2*) echo "npm exchanged the token (HTTP $code): the trusted publisher matches this repository and workflow" ;;
+            *)
+              echo "npm refused the exchange with HTTP $code: no trusted publisher matches this repository and workflow" >&2
+              exit 1 ;;
+          esac
       - name: Publish to npm
+        if: ${{ !inputs.dry_run }}
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: 'true'
