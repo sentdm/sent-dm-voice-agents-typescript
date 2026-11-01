@@ -1,6 +1,6 @@
 {
   "name": "@sentdm/voice-agents",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Sent Voice Agents for TypeScript: an AI agent that takes and places phone calls through Sent",
   "license": "Apache-2.0",
   "repository": {
