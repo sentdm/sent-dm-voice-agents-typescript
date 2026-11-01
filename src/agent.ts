@@ -25,7 +25,7 @@ import type { Sender } from './session.ts';
 export const DEFAULT_URL = `wss://${HOST}${CONNECT_PATH}`;
 /** The longest wait before another attempt to connect. */
 const MAX_BACKOFF_MS = 30_000;
-/** How long a handshake may take before the attempt counts as failed. */
+/** How long a handshake may take before the attempt counts as failed, and how long an open socket may wait for connection.ready. */
 const HANDSHAKE_TIMEOUT_MS = 10_000;
 /** How many heartbeat intervals without a frame make a connection dead, as Heartbeats in docs/protocol.md says. */
 const SILENT_INTERVALS = 3;
@@ -200,7 +200,15 @@ export class Agent {
       handshakeTimeout: HANDSHAKE_TIMEOUT_MS,
     });
     connection.socket = socket;
-    socket.on('open', () => this.log.info(`connected to ${url.host}`));
+    socket.on('open', () => {
+      this.log.info(`connected to ${url.host}`);
+      // Until connection.ready arrives the socket has the handshake's deadline; ready() hands it to heard().
+      clearTimeout(connection.timer);
+      connection.timer = setTimeout(() => {
+        this.log.warn(`no connection.ready for ${HANDSHAKE_TIMEOUT_MS} ms, closing`);
+        socket.terminate();
+      }, HANDSHAKE_TIMEOUT_MS);
+    });
     socket.on('unexpected-response', (request, response) => {
       const status = response.statusCode ?? 0;
       request.destroy();
@@ -247,7 +255,11 @@ export class Agent {
       case 'connection.ready':
         return this.ready(connection, frame as ConnectionReady);
       case 'ping':
-        return connection.send({ type: 'pong', ts: (frame as { ts: number }).ts });
+        connection.send({ type: 'pong', ts: (frame as { ts: number }).ts });
+        // A connection that lived through a heartbeat interval is a good one: the next loss starts the backoff
+        // over. A connection that dies before its first ping keeps it growing.
+        if (connection.ready) this.attempt = 0;
+        return;
       case 'connection.draining':
         return this.drain(connection);
       case 'session.start':
@@ -256,7 +268,7 @@ export class Agent {
         return this.resumed(connection, frame as SessionResumed);
       case 'error':
         this.failed(connection, frame as ErrorFrame);
-        void this.safely(this.onError(frame as ErrorFrame));
+        void this.safely(() => this.onError(frame as ErrorFrame));
         return;
       default:
         if (typeof (frame as { session_id?: unknown }).session_id !== 'string')
@@ -268,7 +280,6 @@ export class Agent {
   private ready(connection: Connection, frame: ConnectionReady): void {
     connection.ready = true;
     connection.heartbeatMs = frame.heartbeat_interval_ms;
-    this.attempt = 0;
     this.heard(connection);
     const pending = connection.pending.filter((session) => this.live.get(session.id) === session);
     connection.pending = [];
@@ -276,7 +287,7 @@ export class Agent {
       `ready: protocol ${frame.protocol_version}, up to ${frame.max_sessions} sessions, resuming ${pending.length}`,
     );
     for (const session of pending) this.resume(connection, session);
-    void this.safely(this.onConnected(frame));
+    void this.safely(() => this.onConnected(frame));
   }
 
   private resume(connection: Connection, session: Session): void {
@@ -340,10 +351,19 @@ export class Agent {
     for (const frameAgain of again) connection.send(frameAgain);
   }
 
+  /**
+   * An error is uncounted, as Counting frames in docs/protocol.md says. Only one that refuses a session.resume
+   * changes the session's fate; any other is the handler's to read.
+   */
   private failed(connection: Connection, frame: ErrorFrame): void {
     this.log.warn(`error ${frame.error.code}: ${frame.error.message}`);
     const session = frame.session_id ? connection.sessions.get(frame.session_id) : undefined;
     if (!session || !session.resuming) return;
+    if (
+      frame.frame_type !== 'session.resume' &&
+      !['resume_failed', 'connection_full'].includes(frame.error.code)
+    )
+      return;
     session.resuming = false;
     connection.sessions.delete(session.id);
     // This connection already carries max_sessions. The token is still good on another one.
@@ -358,6 +378,7 @@ export class Agent {
 
   private lost(session: Session): void {
     this.forget(session);
+    session.abandon();
     this.enqueue(session, () => this.onSessionLost(session));
   }
 
@@ -395,13 +416,16 @@ export class Agent {
   // ----- the session's chain -----
 
   private enqueue(session: Session, handler: () => Promise<void>): void {
-    session.queue = session.queue.then(() => this.safely(handler()));
+    session.queue = session.queue.then(() => this.safely(handler));
   }
 
-  /** Runs a handler; an exception in it is logged and does not take the session or the agent down. */
-  private async safely(handler: Promise<void>): Promise<void> {
+  /**
+   * Runs a handler; an exception in it, thrown or rejected, is logged and does not take the session or the agent
+   * down.
+   */
+  private async safely(handler: () => Promise<void>): Promise<void> {
     try {
-      await handler;
+      await handler();
     } catch (error) {
       this.log.error(
         `a handler failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
