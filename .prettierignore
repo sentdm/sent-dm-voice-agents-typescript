@@ -2,3 +2,5 @@ dist/
 tests/fixtures/
 CHANGELOG.md
 src/frames.ts
+# release-please rewrites the manifest compactly on every release PR; its shape is release-please's.
+.release-please-manifest.json
