@@ -231,8 +231,8 @@ export const FROM_AGENT: ReadonlySet<string> = new Set(["agent.say", "tool.call"
 export const SESSION_SCOPED: ReadonlySet<string> = new Set(["session.start", "user.said", "tool.result", "session.end", "session.resumed", "agent.say", "tool.call", "agent.clear", "session.resume"]);
 /** Which session types allow each session frame. */
 export const SESSION_TYPES: Readonly<Record<string, ReadonlySet<string>>> = {"session.start": new Set(["text", "audio"]), "user.said": new Set(["text"]), "tool.result": new Set(["text", "audio"]), "session.end": new Set(["text", "audio"]), "session.resumed": new Set(["text", "audio"]), "agent.say": new Set(["text"]), "tool.call": new Set(["text", "audio"]), "agent.clear": new Set(["text", "audio"]), "session.resume": new Set(["text", "audio"])};
-/** Session frames that do not count towards `received`; every other frame with a session_id counts, also one of an unknown type. */
-export const UNCOUNTED: ReadonlySet<string> = new Set(["session.start", "session.resumed", "session.resume", "audio"]);
+/** Frames that do not count towards `received`, whatever they carry; every other frame with a session_id counts, also one of an unknown type. */
+export const UNCOUNTED: ReadonlySet<string> = new Set(["error", "session.start", "session.resumed", "session.resume", "audio"]);
 /** The values Sent lists today; it may add more, so a runtime treats others as it would the fallback. */
 export const PARTY_KINDS = ["user", "number", "conference", "agent", "anonymous"] as const;
 /** The values Sent lists today; it may add more, so a runtime treats others as it would the fallback. */

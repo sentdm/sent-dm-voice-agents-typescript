@@ -2,7 +2,7 @@
 // frames, what a resume sends again, and tool calls answered by their result.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { RETAINED_FRAMES, decode } from '../src/frames.ts';
+import { FrameError, RETAINED_FRAMES, decode } from '../src/frames.ts';
 import type {
   KnownFrame,
   SessionEnd,
@@ -124,4 +124,75 @@ test('audio goes out on the session stream', () => {
   session.sendAudio(Buffer.alloc(640, 1));
   assert.deepEqual([...recorder.audio[0]!.subarray(0, 2)], [0, 7]);
   assert.equal(recorder.audio[0]!.length, 642);
+});
+
+test('a frame that breaks the protocol is refused before it counts', async () => {
+  const recorder = new Recorder();
+  const session = new Session(start(), recorder);
+  assert.throws(() => session.say(''), FrameError);
+  await assert.rejects(session.sendDtmf('xyz'), FrameError);
+  assert.equal(session.sent, 0);
+  assert.equal(recorder.frames.length, 0);
+});
+
+test('frames sent during a resume wait for the replay', async () => {
+  const recorder = new Recorder();
+  const session = new Session(start(), recorder);
+  session.say('before');
+  session.resuming = true;
+  session.say('during');
+  const promise = session.hangup();
+  assert.deepEqual(
+    recorder.frames.map((f) => (f as { text: string }).text),
+    ['before'],
+  );
+  assert.equal(session.sent, 3);
+  const again = session.resumed(
+    decode({
+      type: 'session.resumed',
+      session_id: 'vs_1',
+      received: 1,
+      resume: { token: 'vsr_' + 'd'.repeat(30), window_ms: 15000 },
+    }) as SessionResumed,
+  );
+  assert.deepEqual(
+    again.map((f) => (f as { text?: string; name?: string }).text ?? (f as { name?: string }).name),
+    ['during', 'hangup'],
+  );
+  session.answerTool(
+    decode({
+      type: 'tool.result',
+      session_id: 'vs_1',
+      call_ref: (again[1] as ToolCall).call_ref,
+      ok: true,
+    }) as ToolResult,
+  );
+  assert.equal((await promise).ok, true);
+});
+
+test('audio during a resume is dropped, and after the end refused', () => {
+  const recorder = new Recorder();
+  const session = new Session(start({ session_type: 'audio', audio: { stream: 7 } }), recorder);
+  session.resuming = true;
+  session.sendAudio(Buffer.alloc(640, 1));
+  assert.equal(recorder.audio.length, 0);
+  session.resuming = false;
+  session.finish(
+    decode({
+      type: 'session.end',
+      session_id: 'vs_1',
+      reason: 'caller_hung_up',
+      duration_ms: 10,
+    }) as SessionEnd,
+  );
+  assert.throws(() => session.sendAudio(Buffer.alloc(640, 1)), SessionEnded);
+});
+
+test('a lost session fails its tool calls and refuses more', async () => {
+  const session = new Session(start(), new Recorder());
+  const promise = session.hangup();
+  session.abandon();
+  await assert.rejects(promise, SessionEnded);
+  assert.ok(session.ended && session.lost);
+  assert.throws(() => session.say('too late'), SessionEnded);
 });
