@@ -1,0 +1,57 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Named by the Node version alone: the ruleset requires `test (20)`, `test (22)` and `test (24)`.
+    name: test (${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # The tests run TypeScript straight through Node's type stripping, which Node 22.6 brought; on
+        # Node 20 the package type-checks, builds and loads, which is what its users on 20 do.
+        include:
+          - node: '20'
+            tests: false
+          - node: '22'
+            tests: true
+          - node: '24'
+            tests: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm install
+      - run: npm run typecheck
+      - if: matrix.tests
+        run: npm test
+      - run: npm run build
+      - name: The built package loads
+        run: node -e "import('./dist/index.js').then((m) => { if (typeof m.Agent !== 'function') throw new Error('no Agent export'); })"
+      - run: npm run format
+
+  conformance:
+    name: conformance
+    # The protocol's scenarios against this SDK's conformance agent, at the protocol tag the package implements.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - run: npm run build
+      - uses: sentdm/sent-dm-voice-protocol@v0.2.0
+        with:
+          agent: node dist/conformance.js
