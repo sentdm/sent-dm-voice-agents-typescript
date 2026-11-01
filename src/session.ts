@@ -4,7 +4,7 @@
 // the agent's frames on whichever connection the session is on, keeps the latest counted frames so a resume can
 // send again the ones Sent did not read, and turns a tool call into the tool.result that answers it.
 import { audioFrame } from './audio.ts';
-import { RETAINED_FRAMES, UNCOUNTED } from './frames.ts';
+import { RETAINED_FRAMES, UNCOUNTED, encode } from './frames.ts';
 import type {
   Frame,
   KnownFrame,
@@ -59,6 +59,8 @@ export class Session {
   received = 0;
   /** session.end, once it arrived. */
   end: SessionEnd | undefined;
+  /** The connection was lost and the session could not be resumed: Sent ends the call without a session.end. */
+  lost = false;
 
   /** @internal */ connection: Sender;
   /** @internal A session.resume was sent on the current connection and Sent has not answered it yet. */
@@ -94,8 +96,9 @@ export class Session {
 
   // ----- what the agent does on the call -----
 
+  /** Whether the call has left the agent: session.end arrived, or the session was lost. */
   get ended(): boolean {
-    return this.end !== undefined;
+    return this.end !== undefined || this.lost;
   }
 
   /** Whether the session survives a lost connection: it has a resume token. */
@@ -129,10 +132,14 @@ export class Session {
 
   /**
    * Audio sessions: play `samples`, 16-bit little-endian mono PCM at the session's sample rate. Send 20 ms per
-   * call, and no more than 200 ms.
+   * call, and no more than 200 ms. Throws SessionEnded once the call has left the agent.
    */
   sendAudio(samples: Buffer): void {
+    if (this.ended) throw new SessionEnded(this.id);
     if (this.stream === undefined) throw new Error(`session ${this.id} is a text session`);
+    // The stream number belongs to the old connection; on the new one it may be another caller's until
+    // session.resumed assigns this session's. Audio is not counted, so there is nothing to send again.
+    if (this.resuming) return;
     this.connection.sendBytes(audioFrame(this.stream, samples));
   }
 
@@ -178,10 +185,16 @@ export class Session {
 
   // ----- what the agent's connection does with the session -----
 
-  /** @internal Sends a frame for the session on its connection, keeping it if it counts. */
+  /**
+   * @internal Sends a frame for the session on its connection, keeping it if it counts. A frame that breaks the
+   * protocol is refused before it counts. While a resume is unanswered the frame is kept and not sent: the
+   * replay after session.resumed sends it, once, on the connection the session is on.
+   */
   send(frame: KnownFrame): void {
     if (this.ended) throw new SessionEnded(this.id);
+    encode(frame);
     this.keep(frame);
+    if (this.resuming) return;
     this.connection.send(frame);
   }
 
@@ -235,6 +248,20 @@ export class Session {
   /** @internal */
   finish(end: SessionEnd): void {
     this.end = end;
+    this.failPending();
+  }
+
+  /**
+   * @internal The session is lost: no tool.result or session.end will come, so every waiting tool call fails,
+   * and anything sent from now on is refused.
+   */
+  abandon(): void {
+    this.lost = true;
+    this.resuming = false;
+    this.failPending();
+  }
+
+  private failPending(): void {
     for (const pending of this.pending.values()) pending.reject(new SessionEnded(this.id));
     this.pending.clear();
   }
