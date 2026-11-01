@@ -1,6 +1,7 @@
 # Runs when release-please publishes a release, and by hand to publish again if a run failed. By hand with
 # `dry_run`, it only exchanges the job's OIDC token with npm, which checks the trusted publisher without
-# publishing.
+# publishing. A hand publish runs on the release tag, never on a branch: `gh workflow run publish-npm.yml
+# --ref v<version>`.
 #
 # npm attaches a trusted publisher only to a package that already exists, so the package's first version is
 # published with a short-lived NPM_TOKEN repository secret (a granular access token for the @sentdm scope with
@@ -21,7 +22,8 @@ on:
     types: [published]
 
 concurrency:
-  group: publish-npm
+  # A dry run never queues behind, or displaces, a real publish.
+  group: publish-npm${{ inputs.dry_run && '-dry-run' || '' }}
   cancel-in-progress: false
 
 jobs:
@@ -39,12 +41,20 @@ jobs:
         with:
           node-version: '22'
       - name: The version to publish
-        # 0.0.0 is the template's placeholder: the repository has no release yet, so there is nothing to publish.
+        # 0.0.0 is the template's placeholder: the repository has no release yet. A hand run publishes the
+        # release tag whose version package.json carries, so main's later commits never ship under an old number.
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           version="$(node -p "require('./package.json').version")"
           echo "version=$version"
-          if [ "$version" = "0.0.0" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+          [ "$DRY_RUN" = "true" ] && exit 0
+          if [ "$version" = "0.0.0" ]; then
             echo "no release yet: package.json still carries 0.0.0" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && { [ "$GITHUB_REF_TYPE" != "tag" ] || [ "$GITHUB_REF_NAME" != "v$version" ]; }; then
+            echo "a hand run publishes the release tag: gh workflow run publish-npm.yml --ref v$version" >&2
             exit 1
           fi
       - run: npm install
@@ -54,7 +64,11 @@ jobs:
         # is never printed.
         if: ${{ inputs.dry_run }}
         run: |
-          id_token="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).value")"
+          id_token="$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).value ?? ''")"
+          if [ -z "$id_token" ]; then
+            echo "GitHub issued no OIDC token for this job" >&2
+            exit 1
+          fi
           name="$(node -p "require('./package.json').name.replace('/', '%2f')")"
           code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $id_token" -H 'Content-Type: application/json' "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/$name")"
           case "$code" in
