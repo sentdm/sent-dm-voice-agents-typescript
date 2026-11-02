@@ -52,6 +52,6 @@ jobs:
           node-version: '22'
       - run: npm install
       - run: npm run build
-      - uses: sentdm/sent-dm-voice-protocol@v0.2.0
+      - uses: sentdm/sent-dm-voice-protocol@v1.0.0
         with:
           agent: node dist/conformance.js
