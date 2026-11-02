@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/sentdm/sent-dm-voice-agents-typescript/compare/v0.1.1...v0.2.0) (2026-11-02)
+
+
+### Features
+
+* **protocol:** protocol v1.0.0 ([bcbb23e](https://github.com/sentdm/sent-dm-voice-agents-typescript/commit/bcbb23e21ba6487af1b53cc65457a94bfd558aee))
+
 ## [0.1.1](https://github.com/sentdm/sent-dm-voice-agents-typescript/compare/v0.1.0...v0.1.1) (2026-11-01)
 
 
